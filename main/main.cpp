@@ -46,7 +46,7 @@ static bool wait_for_network_registration(uint32_t timeout_ms)
     ESP_LOGI(TAG, "Waiting for network registration");
     
     uint32_t elapsed = 0;
-    WalterModemNetworkRegState regState;
+    WalterModemNetworkRegState regState = WALTER_MODEM_NETWORK_REG_NOT_SEARCHING;
     
     while (elapsed < timeout_ms) {
         regState = WalterModem::getNetworkRegState();
@@ -75,7 +75,7 @@ static void get_signal_info(void)
     
     if (WalterModem::getSignalQuality(&rsp)) {
         ESP_LOGI(TAG, "Signal quality - RSSI: %d dBm, RSRP: %d dBm", 
-                 rsp.data.signalQuality.rssi, 
+                 rsp.data.signalQuality.rsrq, 
                  rsp.data.signalQuality.rsrp);
     } else {
         ESP_LOGW(TAG, "Could not retrieve signal quality");
