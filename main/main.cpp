@@ -24,7 +24,7 @@
 static const char *TAG = "walter_nbiot";
 
 // Enable debug mode (set to false to disable verbose debugging)
-#define DEBUG_MODE true
+#define DEBUG_MODE false
 
 // Network configuration - Soracom
 #define CELLULAR_APN "soracom.io"          // Soracom APN
