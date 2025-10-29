@@ -21,3 +21,6 @@ Thumbs.db
 .gitignore
 .devcontainer/Dockerfile
 .devcontainer/devcontainer.json
+
+# Misc temp project files
+/extras/
