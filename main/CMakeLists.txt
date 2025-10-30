@@ -1,4 +1,4 @@
 idf_component_register(
-    SRCS "main.cpp" "WalterHTTPS.h"
+    SRCS "main.cpp" "WalterCOMM.h" "WalterCOMM.cpp" 
     INCLUDE_DIRS "."
 )
