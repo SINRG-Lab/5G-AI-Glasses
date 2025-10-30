@@ -5,6 +5,9 @@ sdkconfig.old
 dependencies.lock
 managed_components/
 
+# ESP WebRTC
+/esp-webrtc-solution-v1.0.0
+
 # VS Code
 .vscode/
 *.code-workspace
