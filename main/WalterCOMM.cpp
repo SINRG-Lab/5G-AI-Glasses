@@ -1,4 +1,28 @@
 /**
+ * === Communications libary for the Walter Board ===
+ * @file WalterCOMM.cpp
+ * @author Ryder Paulson <paulson.r@northeastern.edu
+ * @brief A set of communications tools for the Walter Board
+ */
+#include "esp_system.h"
+#include "esp_log.h"
+#include "esp_webrtc.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/uart.h"
+#include "WalterModem.h"
+#include "WalterCOMM.h"
+
+// Local esponse object for Modem
+static WalterModemRsp rsp = {};
+
+// Local buffer for incoming HTTPS response
+static uint8_t incomingBuf[1024] = { 0 };
+
+static const char *TAG = "COM";
+
+/**
+ * === Start of code from example ===
  * @file WalterHTTPS.h
  * @author Arnoud Devoogdt <arnoud@dptechnics.com>
  * @date 11 September 2025
@@ -50,22 +74,6 @@
  * send HTTPS POST and GET requests within the Arduino IDE. It has been been 
  * modified to work with ESP-IDF in VSCode. 
  */
-
-#include "esp_system.h"
-#include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "driver/uart.h"
-#include "WalterModem.h"
-#include "WalterCOMM.h"
-
-// Local esponse object for Modem
-static WalterModemRsp rsp = {};
-
-// Local buffer for incoming HTTPS response
-static uint8_t incomingBuf[1024] = { 0 };
-
-static const char *TAG = "COM";
 
 static const char ca_cert[] = R"EOF(
 -----BEGIN CERTIFICATE-----
@@ -288,3 +296,7 @@ namespace comm{
     return waitForHttpsResponse(modem_https_profile, ctBuf);
   }
 }
+
+/**
+ * === End of code from example ===
+ */
