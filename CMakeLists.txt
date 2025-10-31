@@ -6,8 +6,11 @@ cmake_minimum_required(VERSION 3.5)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
+set(PARTITION_CSV_PATH ${CMAKE_SOURCE_DIR}/partitions.csv)
+
 list(APPEND EXTRA_COMPONENT_DIRS "esp-webrtc-solution-v1.0.0/components")
 
 list(APPEND EXTRA_COMPONENT_DIRS "esp-webrtc-solution-v1.0.0/solutions/common")
 
 project(5G-AI-Glasses)
+spiffs_create_partition_image(storage spiffs_data FLASH_IN_PROJECT)

@@ -25,5 +25,8 @@ Thumbs.db
 .devcontainer/Dockerfile
 .devcontainer/devcontainer.json
 
+# File with API Key
+spiffs_data/config.json
+
 # Misc temp project files
 /extras/

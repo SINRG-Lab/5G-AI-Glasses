@@ -1,7 +1,14 @@
 ## IDF Component Manager Manifest File
+## Required IDF version
 dependencies:
+  idf: ">=5.0.0"
   dptechnics/walter-modem: "^1.4.3"
   espressif/esp_websocket_client: "^1.0.0"
-  ## Required IDF version
-  idf:
-    version: ">=5.0.0"
+  capture_audio_src:
+    path: ../esp-webrtc-solution-v1.0.0/components/esp_capture/src/impl/capture_audio_src
+  capture_audio_enc:
+    path: ../esp-webrtc-solution-v1.0.0/components/esp_capture/src/impl/capture_audio_enc
+  peer_default:
+    path: ../esp-webrtc-solution-v1.0.0/components/esp_webrtc/impl/peer_default
+  render_impl:
+     path: ../esp-webrtc-solution-v1.0.0/components/av_render/render_impl

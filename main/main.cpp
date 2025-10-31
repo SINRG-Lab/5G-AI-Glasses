@@ -8,15 +8,27 @@
  * 
  */
 
+// Standard C components
 #include <stdio.h>
 #include <string.h>
+#include <dirent.h>
+
+// FreeRTOS components
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
+// ESP components
 #include "esp_system.h"
-#include "esp_websocket_client.h"
 #include "esp_log.h"
+#include "esp_websocket_client.h"
+#include "esp_webrtc.h"
+#include "esp_spiffs.h"
 #include "driver/uart.h"
+
+// Walter modem component from 
 #include "WalterModem.h"
+
+// Unique component to this project
 #include "WalterCOMM.h"
 
 // The TLS profile to use for the application
@@ -28,6 +40,55 @@ static const int MODEM_HTTPS_PROFILE = 1;
 static const char* TAG = "WALTER";
 
 /**
+ * @brief Inititializes the on board storage for the config and audio file.
+ */
+void init_spiffs(void) 
+{
+    esp_vfs_spiffs_conf_t conf = {
+        .base_path = "/spiffs",
+        .partition_label = "storage",
+        .max_files = 5,
+        .format_if_mount_failed = true
+    };
+    
+    esp_err_t ret = esp_vfs_spiffs_register(&conf);
+    
+    if (ret != ESP_OK) {
+        if (ret == ESP_FAIL) {
+            ESP_LOGE(TAG, "Failed to mount or format filesystem");
+        } else if (ret == ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to find SPIFFS partition");
+        } else {
+            ESP_LOGE(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
+        }
+        return;
+    }
+    
+    size_t total = 0, used = 0;
+    ret = esp_spiffs_info("storage", &total, &used);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
+    }
+}
+
+
+void list_spiffs_files(void)
+{
+    DIR *dir = opendir("/spiffs");
+    if (dir == NULL) {
+        ESP_LOGE(TAG, "Failed to open directory");
+        return;
+    }
+    
+    struct dirent *entry;
+    ESP_LOGI(TAG, "Files in SPIFFS:");
+    while ((entry = readdir(dir)) != NULL) {
+        ESP_LOGI(TAG, "  - %s", entry->d_name);
+    }
+    closedir(dir);
+}
+
+/**
  * @brief Main application entry point
  */
 extern "C" void app_main(void) 
@@ -36,6 +97,10 @@ extern "C" void app_main(void)
 
   // Wait for system to stabilize
   vTaskDelay(pdMS_TO_TICKS(2000));
+
+  // Initilize and verify on-board storage
+  init_spiffs();
+  list_spiffs_files();
 
   const int https_port = 443;
 
@@ -98,13 +163,14 @@ extern "C" void app_main(void)
   } else {
     ESP_LOGE(TAG, "Failed to configure HTTPS profile");
   }
+
+  // TODO Read in audio from partitioned file
   
-  // Generic POST
-  const char example_jsonBody[] = "{\"hello\":\"walter\"}";
-  if(!comm::httpsPost(example_https_post_endpoint, (const uint8_t*) example_jsonBody, strlen(example_jsonBody),
-                "application/json", MODEM_HTTPS_PROFILE, example_https_host)) {
-    ESP_LOGE(TAG, "HTTPS POST failed, restarting...");
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    esp_restart();
-  }
+
+  // Open WebRTC connection
+  
+
+  // Send audio to OpenAI
+
+
 }
