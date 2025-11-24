@@ -1,12 +1,21 @@
 idf_component_register(
-    SRCS "walter_spiffs.cpp" "walter_com.cpp" "audio_agent.cpp" "walter_spiffs.h" "audio_agent.h" "walter_com.h" "main.cpp" 
-    INCLUDE_DIRS "."
+    SRCS 
+        "walter_spiffs.cpp" 
+        "walter_com.cpp" 
+        "audio_agent.cpp" 
+        "main.cpp" 
+    INCLUDE_DIRS 
+        "."
     REQUIRES 
         audio_pipeline
         esp-adf-libs
         spiffs
         json
-    PRIV_REQUIRES
+        mbedtls
         esp_wifi
+        esp_websocket_client 
+        esp_netif 
+        esp_event 
+        esp-tls
         nvs_flash
 )

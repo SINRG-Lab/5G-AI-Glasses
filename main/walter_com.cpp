@@ -18,6 +18,7 @@
 
 #include "freertos/event_groups.h"
 #include "esp_wifi.h"
+#include "esp_websocket_client.h"
 #include "esp_mac.h"
 #include "esp_event.h"
 #include "nvs_flash.h"
@@ -77,7 +78,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 /**
  * @brief Common routine to wait for and print an HTTP response.
  */
-static bool waitForHttpsResponse(uint8_t profile, const char* contentType) 
+static bool WaitForHttpsResponse(uint8_t profile, const char* contentType) 
 {
   ESP_LOGI(TAG, "Waiting for reply...");
   const uint16_t maxPolls = 30;
@@ -96,6 +97,19 @@ static bool waitForHttpsResponse(uint8_t profile, const char* contentType)
 
 namespace com{
 WalterModem modem;
+
+// Global connection state
+ConnectionState g_connection_state = {CONN_NONE, false};
+
+ConnectionType GetConnectionType() 
+{
+    return g_connection_state.type;
+}
+
+bool IsConnected() 
+{
+    return g_connection_state.is_connected;
+}
 
 // ========================================
 // LTE Network Functions
@@ -147,20 +161,22 @@ bool LTEDisconnect()
 {
     // Set the operational state to minimum
     if(modem.setOpState(WALTER_MODEM_OPSTATE_MINIMUM)) {
-    ESP_LOGI(TAG, "Successfully set operational state to MINIMUM");
+        ESP_LOGI(TAG, "Successfully set operational state to MINIMUM");
     } else {
-    ESP_LOGE(TAG, "Could not set operational state to MINIMUM");
-    return false;
+        ESP_LOGE(TAG, "Could not set operational state to MINIMUM");
+        return false;
     }
 
     // Wait for the network to become available
     WalterModemNetworkRegState regState = modem.getNetworkRegState();
     while(regState != WALTER_MODEM_NETWORK_REG_NOT_SEARCHING) {
-    vTaskDelay(pdMS_TO_TICKS(100));
-    regState = modem.getNetworkRegState();
+        vTaskDelay(pdMS_TO_TICKS(100));
+        regState = modem.getNetworkRegState();
     }
 
     ESP_LOGI(TAG, "Disconnected from the network");
+    g_connection_state.type = CONN_NONE;
+    g_connection_state.is_connected = false;
     return true;
 }
 
@@ -176,7 +192,7 @@ bool LTEConnect()
         ESP_LOGI(TAG, "Successfully set operational state to NO RF");
     } else {
         ESP_LOGE(TAG, "Could not set operational state to NO RF");
-    return false;
+        return false;
     }
 
     // Create PDP context
@@ -209,7 +225,7 @@ bool LTEConnect()
         return false;
     }
 
-    // Aattach to network
+    // Attach to network
     if(!modem.setNetworkAttachmentState(true)) {
         ESP_LOGE(TAG, "Could not attach to network");
         return false;
@@ -221,10 +237,14 @@ bool LTEConnect()
     // Verify PDP context is active
     if(modem.getPDPAddress(&rsp, NULL, NULL, 1)) {
         ESP_LOGI(TAG, "PDP context active with IP: %s", rsp.data.pdpAddressList.pdpAddress);
+        g_connection_state.type = CONN_CELLULAR;
+        g_connection_state.is_connected = true;
         return true;
     }
 
     ESP_LOGE(TAG, "No IP address assigned");
+    g_connection_state.type = CONN_NONE;
+    g_connection_state.is_connected = false;
     return false;
 }
 
@@ -346,12 +366,18 @@ bool WiFiConnect(const char *ssid, const char *password, uint32_t timeout_ms)
     bool success = false;
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "Successfully connected to WiFi");
+        g_connection_state.type = CONN_WIFI;
+        g_connection_state.is_connected = true;
         success = true;
     } else if (bits & WIFI_FAIL_BIT) {
         ESP_LOGE(TAG, "Failed to connect to WiFi");
+        g_connection_state.type = CONN_NONE;
+        g_connection_state.is_connected = false;
         success = false;
     } else {
         ESP_LOGE(TAG, "WiFi connection timeout");
+        g_connection_state.type = CONN_NONE;
+        g_connection_state.is_connected = false;
         success = false;
     }
 
@@ -377,6 +403,8 @@ void WiFiDisconnect(void)
     esp_wifi_disconnect();
     esp_wifi_stop();
     esp_wifi_deinit();
+    g_connection_state.type = CONN_NONE;
+    g_connection_state.is_connected = false;
 }
 
 // ========================================
@@ -439,7 +467,7 @@ bool HttpsPost(
         return false;
     }
     ESP_LOGI(TAG, "HTTPS POST successfully sent");
-    return waitForHttpsResponse(modem_https_profile, ctBuf);
+    return WaitForHttpsResponse(modem_https_profile, ctBuf);
 }
 
 // ========================================
@@ -456,7 +484,47 @@ struct WsFrame {
     uint8_t* payload;
 };
 
-RealtimeWsSession wsSession = {false, {0}, {0}, 0};
+RealtimeWsSession wsSession = {false, {0}, {0}, 0, nullptr};
+
+/**
+ * @brief WiFi WebSocket event handler
+ */
+void WifiWebSocketEventHandler(void* handler_args, esp_event_base_t base, 
+                                int32_t event_id, void* event_data)
+{
+    esp_websocket_event_data_t* data = (esp_websocket_event_data_t*)event_data;
+    
+    switch (event_id) {
+        case WEBSOCKET_EVENT_CONNECTED:
+            ESP_LOGI(TAG, "WiFi WebSocket connected");
+            wsSession.connected = true;
+            break;
+            
+        case WEBSOCKET_EVENT_DISCONNECTED:
+            ESP_LOGI(TAG, "WiFi WebSocket disconnected");
+            wsSession.connected = false;
+            break;
+            
+        case WEBSOCKET_EVENT_DATA:
+            ESP_LOGI(TAG, "WiFi WebSocket data received: %d bytes", data->data_len);
+            // Store received data in session buffer
+            if (data->data_len <= sizeof(wsSession.recv_buffer)) {
+                memcpy(wsSession.recv_buffer, data->data_ptr, data->data_len);
+                wsSession.recv_buffer_len = data->data_len;
+            } else {
+                ESP_LOGW(TAG, "Received data too large for buffer");
+            }
+            break;
+            
+        case WEBSOCKET_EVENT_ERROR:
+            ESP_LOGE(TAG, "WiFi WebSocket error");
+            wsSession.connected = false;
+            break;
+            
+        default:
+            break;
+    }
+}
 
 /**
  * @brief Generate WebSocket accept key from client key
@@ -613,42 +681,66 @@ bool WsSend(const uint8_t* payload, size_t payload_len, uint8_t opcode)
         return false;
     }
 
-    // Create frame header
-    uint8_t header[14];
-    size_t header_len = CreateWsFrameHeader(header, opcode, payload_len, true);
-
-    // Get mask key from header
-    uint8_t mask_key[4];
-    memcpy(mask_key, header + header_len - 4, 4);
-
-    // Create masked payload
-    uint8_t* masked_payload = (uint8_t*)malloc(payload_len);
-    if(!masked_payload) {
-        ESP_LOGE(TAG, "Failed to allocate payload buffer");
+    if (!IsConnected()) {
+        ESP_LOGE(TAG, "No network connection available");
         return false;
     }
-    memcpy(masked_payload, payload, payload_len);
-    MaskPayload(masked_payload, payload_len, mask_key);
 
-    // Send header
-    WalterModemRsp rsp = {};
-    if(!modem.socketSend(header, header_len, &rsp, NULL, NULL, 
-                        WALTER_MODEM_RAI_NO_INFO, WS_SOCKET_ID)) {
-        ESP_LOGE(TAG, "Failed to send frame header");
+    if (GetConnectionType() == CONN_WIFI) {
+        if (wsSession.wifi_ws_handle == nullptr) {
+            ESP_LOGE(TAG, "WiFi WebSocket handle not initialized");
+            return false;
+        }
+        
+        // All OpenAI Realtime API messages are JSON text (including base64 audio)
+        if (esp_websocket_client_send_text(wsSession.wifi_ws_handle, 
+                                        (const char*)payload, 
+                                        payload_len, 
+                                        portMAX_DELAY) < 0) {
+            ESP_LOGE(TAG, "Failed to send WiFi WebSocket message");
+            return false;
+        }
+        
+        return true;
+        
+    } else if (GetConnectionType() == CONN_CELLULAR) {
+        // Use Walter modem socket for cellular (existing implementation)
+        // Create frame header
+        uint8_t header[14];
+        size_t header_len = CreateWsFrameHeader(header, opcode, payload_len, true);
+
+        // Get mask key from header
+        uint8_t mask_key[4];
+        memcpy(mask_key, header + header_len - 4, 4);
+
+        // Create masked payload
+        uint8_t* masked_payload = (uint8_t*)malloc(payload_len);
+        if(!masked_payload) {
+            ESP_LOGE(TAG, "Failed to allocate payload buffer");
+            return false;
+        }
+        memcpy(masked_payload, payload, payload_len);
+        MaskPayload(masked_payload, payload_len, mask_key);
+
+        WalterModemRsp rsp = {};
+        bool success = true;
+        
+        if(!modem.socketSend(header, header_len, &rsp, NULL, NULL, 
+                            WALTER_MODEM_RAI_NO_INFO, WS_SOCKET_ID)) {
+            ESP_LOGE(TAG, "Failed to send frame header");
+            success = false;
+        } else if(!modem.socketSend(masked_payload, payload_len, &rsp, NULL, NULL, 
+                                    WALTER_MODEM_RAI_NO_INFO, WS_SOCKET_ID)) {
+            ESP_LOGE(TAG, "Failed to send frame payload");
+            success = false;
+        }
+
         free(masked_payload);
-        return false;
+        return success;
     }
 
-    // Send payload
-    if(!modem.socketSend(masked_payload, payload_len, &rsp, NULL, NULL, 
-                        WALTER_MODEM_RAI_NO_INFO, WS_SOCKET_ID)) {
-        ESP_LOGE(TAG, "Failed to send frame payload");
-        free(masked_payload);
-        return false;
-    }
-
-    free(masked_payload);
-    return true;
+    ESP_LOGE(TAG, "Unknown connection type");
+    return false;
 }
 
 /**
@@ -665,52 +757,77 @@ bool WsReceive(uint8_t* buffer, size_t buffer_size, size_t* received_len)
         return false;
     }
 
-    uint16_t available = modem.socketAvailable(WS_SOCKET_ID);
-    if(available == 0) return false;
-
-    uint8_t frame_data[2048];
-    WalterModemRsp rsp = {};
-
-    if(!modem.socketReceive(available, sizeof(frame_data), frame_data, WS_SOCKET_ID, &rsp)) {
-        ESP_LOGE(TAG, "Failed to receive data");
+    if (!IsConnected()) {
+        ESP_LOGE(TAG, "No network connection available");
         return false;
     }
 
-    WsFrame frame;
-    if(!ParseWsFrame(frame_data, available, &frame)) {
-        ESP_LOGE(TAG, "Failed to parse WebSocket frame");
-        return false;
+    if (GetConnectionType() == CONN_WIFI) {
+        // For WiFi, data is received via event handler
+        if (wsSession.recv_buffer_len == 0) {
+            return false;  // No data available
+        }
+        
+        if (wsSession.recv_buffer_len > buffer_size) {
+            ESP_LOGE(TAG, "Received data larger than buffer");
+            return false;
+        }
+        
+        memcpy(buffer, wsSession.recv_buffer, wsSession.recv_buffer_len);
+        *received_len = wsSession.recv_buffer_len;
+        buffer[*received_len] = '\0';
+        
+        // Clear the buffer after reading
+        wsSession.recv_buffer_len = 0;
+        
+        return true;
+        
+    } else if (GetConnectionType() == CONN_CELLULAR) {
+        // Use Walter modem socket for cellular (existing implementation)
+        uint8_t frame_data[2048];
+        WalterModemRsp rsp = {};
+        
+        uint16_t available = modem.socketAvailable(WS_SOCKET_ID);
+        if(available == 0) return false;
+
+        if(!modem.socketReceive(available, sizeof(frame_data), frame_data, WS_SOCKET_ID, &rsp)) {
+            ESP_LOGE(TAG, "Failed to receive data");
+            return false;
+        }
+
+        WsFrame frame;
+        if(!ParseWsFrame(frame_data, available, &frame)) {
+            ESP_LOGE(TAG, "Failed to parse WebSocket frame");
+            return false;
+        }
+
+        // Handle different opcodes
+        switch(frame.opcode) {
+            case WS_OP_TEXT:
+            case WS_OP_BINARY:
+                if(frame.payload_len > buffer_size) {
+                    ESP_LOGE(TAG, "Received payload too large");
+                    return false;
+                }
+                memcpy(buffer, frame.payload, frame.payload_len);
+                *received_len = frame.payload_len;
+                buffer[*received_len] = '\0';
+                return true;
+                
+            case WS_OP_PING:
+                WsSend(frame.payload, frame.payload_len, WS_OP_PONG);
+                return false;
+                
+            case WS_OP_CLOSE:
+                ESP_LOGI(TAG, "WebSocket close frame received");
+                wsSession.connected = false;
+                return false;
+                
+            default:
+                return false;
+        }
     }
 
-    // Handle different opcodes
-    switch(frame.opcode) {
-        case WS_OP_TEXT:
-        case WS_OP_BINARY:
-            if(frame.payload_len > buffer_size) {
-            ESP_LOGE(TAG, "Received payload too large");
-            return false;
-            }
-            memcpy(buffer, frame.payload, frame.payload_len);
-            *received_len = frame.payload_len;
-            buffer[*received_len] = '\0'; // Null terminate for text
-            return true;
-            
-        case WS_OP_PING:
-            // Respond with pong
-            WsSend(frame.payload, frame.payload_len, WS_OP_PONG);
-            return false;
-            
-        case WS_OP_CLOSE:
-            ESP_LOGI(TAG, "WebSocket close frame received");
-            wsSession.connected = false;
-            return false;
-            
-        default:
-            return false;
-    }
-    }
+    return false;
 }
-
-/**
- * === End of implementation ===
- */
+}

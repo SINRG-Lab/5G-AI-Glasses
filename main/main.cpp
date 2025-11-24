@@ -32,6 +32,26 @@ static const int HTTPS_TLS_PROFILE = 2;
 
 static const char* TAG = "MAIN";
 
+void PrintCellInfo(WalterModemCellInformation* cellInfo)
+{
+    ESP_LOGI(TAG, "Cell Information:");
+    ESP_LOGI(TAG, "-> netName: %s", cellInfo->netName);
+    ESP_LOGI(TAG, "-> cc: %u", cellInfo->cc);
+    ESP_LOGI(TAG, "-> nc: %u", cellInfo->nc);
+    ESP_LOGI(TAG, "-> rsrp: %.2f", cellInfo->rsrp);
+    ESP_LOGI(TAG, "-> cinr: %.2f", cellInfo->cinr);
+    ESP_LOGI(TAG, "-> rsrq: %.2f", cellInfo->rsrq);
+    ESP_LOGI(TAG, "-> tac: %u", cellInfo->tac);
+    ESP_LOGI(TAG, "-> pci: %u", cellInfo->pci);
+    ESP_LOGI(TAG, "-> earfcn: %u", cellInfo->earfcn);
+    ESP_LOGI(TAG, "-> rssi: %.2f", cellInfo->rssi);
+    ESP_LOGI(TAG, "-> paging: %u", cellInfo->paging);
+    ESP_LOGI(TAG, "-> cid: %u", cellInfo->cid);
+    ESP_LOGI(TAG, "-> band: %u", cellInfo->band);
+    ESP_LOGI(TAG, "-> bw: %u", cellInfo->bw);
+    ESP_LOGI(TAG, "-> ceLevel: %u", cellInfo->ceLevel);
+}
+
 /**
  * @brief Main application entry point
  */
@@ -45,7 +65,6 @@ extern "C" void app_main(void)
     // Initilize and verify on-board storage
     spiffs::Init();
     spiffs::ListFiles();
-
 
     // Load OpenAI configuration from SPIFFS
     char openai_api_key[256];
@@ -72,40 +91,28 @@ extern "C" void app_main(void)
     const char* network_password = WIFI_PASSWORD;
     const int timeout_ms = 30000;
 
-    if(!com::LTEConnect()) {
-        ESP_LOGE(TAG, "Could not connect to LTE");
-        ESP_LOGI(TAG, "Attempting to connect to WiFi");
-        if(!com::WiFiConnect(network_ssid, network_password, timeout_ms)) {
-            ESP_LOGE(TAG, "Could not connect to WiFi");
-            return;
+    // Connect to WiFi first, fallback to Cellular
+    if(com::WiFiConnect(network_ssid, network_password, timeout_ms)) {
+        ESP_LOGI(TAG, "Connected via WiFi");
+    } else {     
+        ESP_LOGI(TAG, "WiFi failed, trying cellular...");
+        if(com::LTEConnect()) {
+            ESP_LOGI(TAG, "Connected via Cellular");
         } else {
-            // WiFi connects successfully
-            ESP_LOGI(TAG, "WiFi connected");
-            ESP_LOGE(TAG, "Necessary code to connect to OpenAI API by Websocket not implemented for WiFi");
+            ESP_LOGE(TAG, "Could not connect to WiFi or Cellular");
             return;
         }
     }
 
+    // Log connection status
+    ESP_LOGI(TAG, "Connection type: %s", 
+            com::GetConnectionType() == com::CONN_WIFI ? "WiFi" : 
+            com::GetConnectionType() == com::CONN_CELLULAR ? "Cellular" : "None");
+
     // Check the quality of the network connection
     if(com::modem.getCellInformation(WALTER_MODEM_SQNMONI_REPORTS_SERVING_CELL, &rsp)) {
         WalterModemCellInformation &cellInfo = rsp.data.cellInformation;
-
-        ESP_LOGI(TAG, "Cell Information:");
-        ESP_LOGI(TAG, "-> netName: %s", cellInfo.netName);
-        ESP_LOGI(TAG, "-> cc: %u", cellInfo.cc);
-        ESP_LOGI(TAG, "-> nc: %u", cellInfo.nc);
-        ESP_LOGI(TAG, "-> rsrp: %.2f", cellInfo.rsrp);
-        ESP_LOGI(TAG, "-> cinr: %.2f", cellInfo.cinr);
-        ESP_LOGI(TAG, "-> rsrq: %.2f", cellInfo.rsrq);
-        ESP_LOGI(TAG, "-> tac: %u", cellInfo.tac);
-        ESP_LOGI(TAG, "-> pci: %u", cellInfo.pci);
-        ESP_LOGI(TAG, "-> earfcn: %u", cellInfo.earfcn);
-        ESP_LOGI(TAG, "-> rssi: %.2f", cellInfo.rssi);
-        ESP_LOGI(TAG, "-> paging: %u", cellInfo.paging);
-        ESP_LOGI(TAG, "-> cid: %u", cellInfo.cid);
-        ESP_LOGI(TAG, "-> band: %u", cellInfo.band);
-        ESP_LOGI(TAG, "-> bw: %u", cellInfo.bw);
-        ESP_LOGI(TAG, "-> ceLevel: %u", cellInfo.ceLevel);
+        PrintCellInfo(&cellInfo);
     } else {
         ESP_LOGI(TAG, "Failed to get cell information.");
     }

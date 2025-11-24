@@ -9,6 +9,7 @@
 #define WALTER_COMM_H
 
 #include "WalterModem.h"
+#include "esp_websocket_client.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -16,6 +17,37 @@ namespace com {
 
 // Global modem instance
 extern WalterModem modem;
+
+/**
+ * @brief Connection type enumeration
+ */
+enum ConnectionType {
+    CONN_NONE = 0,
+    CONN_WIFI = 1,
+    CONN_CELLULAR = 2
+};
+
+/**
+ * @brief Global connection state
+ */
+struct ConnectionState {
+    ConnectionType type;
+    bool is_connected;
+};
+
+extern ConnectionState g_connection_state;
+
+/**
+ * @brief Get current connection type
+ * @return Current connection type (CONN_NONE, CONN_WIFI, or CONN_CELLULAR)
+ */
+ConnectionType GetConnectionType();
+
+/**
+ * @brief Check if connected to any network
+ * @return true if connected to WiFi or Cellular, false otherwise
+ */
+bool IsConnected();
 
 // ========================================
 // LTE Network Functions
@@ -121,9 +153,16 @@ struct RealtimeWsSession {
     char session_id[64];
     uint8_t recv_buffer[8192];
     size_t recv_buffer_len;
+    esp_websocket_client_handle_t wifi_ws_handle;  // Add this for WiFi
 };
 
 extern RealtimeWsSession wsSession;
+
+/**
+ * @brief Event handler for WebSockets through WiFi
+ */
+void WifiWebSocketEventHandler(void* handler_args, esp_event_base_t base, 
+                                int32_t event_id, void* event_data);
 
 /**
  * @brief Generate random WebSocket key for handshake

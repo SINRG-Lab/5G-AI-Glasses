@@ -6,6 +6,7 @@
 #include "esp_system.h"
 #include "esp_log.h"
 #include "esp_websocket_client.h"
+#include "esp_crt_bundle.h"
 #include "esp_spiffs.h"
 #include "mbedtls/base64.h"
 
@@ -23,6 +24,21 @@ static const char* TAG = "AUDIO AGENT";
 namespace audio_agent {
 
 namespace {
+static bool g_cert_bundle_initialized = false;
+
+/**
+ * @brief Ensures that the certification bundle is initialzied 
+ */
+bool EnsureCertBundleInitialized() 
+{
+    if (!g_cert_bundle_initialized) {
+        esp_crt_bundle_attach(NULL);
+        ESP_LOGI(TAG, "Certificate bundle attached");
+        g_cert_bundle_initialized = true;
+    }
+    return true;
+}
+
 // Forward declarations
 bool SendAudioFile(const char* file_path);
 bool SendAudioStream(const uint8_t* audio_data, size_t audio_len);
@@ -59,6 +75,8 @@ std::optional<std::vector<uint8_t>> SendAndRecieveAudio(
     bool print_response
 ) 
 {   
+    EnsureCertBundleInitialized();
+
     ESP_LOGI(TAG, "Connecting to OpenAI Realtime API...");
     if (!RealtimeConnect(openai_api_key, openai_model)) {
         ESP_LOGE(TAG, "Failed to connect to OpenAI Realtime API");
@@ -526,105 +544,174 @@ bool RealtimeGenerateResponse()
  */
 bool RealtimeConnect(const char* api_key, const char* model)
 {
-    WalterModemRsp rsp = {};
-
-    // First, verify we have network connectivity
-    if(!com::CheckLTEConnected()) {
-        ESP_LOGE(TAG, "Not connected to LTE network");
+    // Check if we have any network connectivity
+    if(!com::IsConnected()) {
+        ESP_LOGE(TAG, "Not connected to any network");
         return false;
     }
 
-    // Get and log PDP address to verify data connection
-    if(com::modem.getPDPAddress(&rsp, NULL, NULL, 1)) {
-        ESP_LOGI(TAG, "PDP context active with IP: %s", rsp.data.pdpAddressList.pdpAddress);
-    } else {
-        ESP_LOGE(TAG, "No PDP address - data connection not active");
-        return false;
-    }
+    com::ConnectionType conn_type = com::GetConnectionType();
+    ESP_LOGI(TAG, "Connecting via %s", 
+             conn_type == com::CONN_WIFI ? "WiFi" : "Cellular");
 
-    // Configure socket with detailed error checking
-    ESP_LOGI(TAG, "Configuring socket...");
-
-    // Explicitly use PDP context 1
-    if(!com::modem.socketConfig(&rsp, NULL, NULL, 1, 1500, 90, 60, 5000)) {
-        ESP_LOGE(TAG, "Failed to configure WebSocket");
+    if (conn_type == com::CONN_WIFI) {
+        // WiFi connection - use ESP-IDF WebSocket client
+        ESP_LOGI(TAG, "Initializing WiFi WebSocket connection...");
         
-        // Check response type for error details
-        if(rsp.type == WALTER_MODEM_RSP_DATA_TYPE_CME_ERROR) {
-            ESP_LOGE(TAG, "CME Error: %d", rsp.data.cmeError);
+        // Build WebSocket URI
+        char ws_uri[512];
+        snprintf(ws_uri, sizeof(ws_uri),
+                "wss://api.openai.com/v1/realtime?model=%s", model);
+        
+        // Build authorization header
+        char auth_header[512];
+        snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", api_key);
+        
+        // Configure WebSocket client with certificate bundle
+        esp_websocket_client_config_t ws_cfg = {};
+        ws_cfg.uri = ws_uri;
+        ws_cfg.task_stack = 8192;
+        ws_cfg.buffer_size = 8192;
+        ws_cfg.headers = auth_header;
+        ws_cfg.subprotocol = nullptr;
+        ws_cfg.user_agent = "ESP32-Walter";
+        ws_cfg.disable_auto_reconnect = true;
+        
+        // CRITICAL: Enable certificate bundle for TLS verification
+        ws_cfg.crt_bundle_attach = esp_crt_bundle_attach;
+        ws_cfg.skip_cert_common_name_check = false;
+        
+        // Create WebSocket client
+        com::wsSession.wifi_ws_handle = esp_websocket_client_init(&ws_cfg);
+        if (com::wsSession.wifi_ws_handle == nullptr) {
+            ESP_LOGE(TAG, "Failed to initialize WiFi WebSocket client");
+            return false;
         }
         
-        // Check modem state
-        ESP_LOGE(TAG, "Modem state: %d", rsp.result);
+        // Register event handler
+        esp_websocket_register_events(com::wsSession.wifi_ws_handle, 
+                                    WEBSOCKET_EVENT_ANY,
+                                    com::WifiWebSocketEventHandler, 
+                                    nullptr);
         
-        return false;
-    }
+        // Connect
+        if (esp_websocket_client_start(com::wsSession.wifi_ws_handle) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to start WiFi WebSocket client");
+            esp_websocket_client_destroy(com::wsSession.wifi_ws_handle);
+            com::wsSession.wifi_ws_handle = nullptr;
+            return false;
+        }
+        
+        // Wait for connection
+        int retry_count = 0;
+        const int max_retries = 30; // 3 seconds
+        while (!com::wsSession.connected && retry_count < max_retries) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            retry_count++;
+        }
+        
+        if (!com::wsSession.connected) {
+            ESP_LOGE(TAG, "WiFi WebSocket connection timeout");
+            esp_websocket_client_destroy(com::wsSession.wifi_ws_handle);
+            com::wsSession.wifi_ws_handle = nullptr;
+            return false;
+        }
+        
+        ESP_LOGI(TAG, "WiFi WebSocket connected to OpenAI Realtime API");
+        return true;
+        
+    } else if (conn_type == com::CONN_CELLULAR) {
+        // Cellular connection - use Walter modem sockets (existing implementation)
+        WalterModemRsp rsp = {};
+        
+        // Get and log PDP address to verify data connection
+        if(com::modem.getPDPAddress(&rsp, NULL, NULL, 1)) {
+            ESP_LOGI(TAG, "PDP context active with IP: %s", rsp.data.pdpAddressList.pdpAddress);
+        } else {
+            ESP_LOGE(TAG, "No PDP address - data connection not active");
+            return false;
+        }
 
-    ESP_LOGI(TAG, "Socket configured successfully, socket ID: %d", rsp.data.socketId);
+        // Configure socket
+        ESP_LOGI(TAG, "Configuring socket...");
+        if(!com::modem.socketConfig(&rsp, NULL, NULL, 1, 1500, 90, 60, 5000)) {
+            ESP_LOGE(TAG, "Failed to configure WebSocket");
+            if(rsp.type == WALTER_MODEM_RSP_DATA_TYPE_CME_ERROR) {
+                ESP_LOGE(TAG, "CME Error: %d", rsp.data.cmeError);
+            }
+            ESP_LOGE(TAG, "Modem state: %d", rsp.result);
+            return false;
+        }
 
-    // Enable TLS on socket
-    if(!com::modem.socketConfigSecure(true, com::WS_TLS_PROFILE, com::WS_SOCKET_ID)) {
-        ESP_LOGE(TAG, "Failed to enable TLS on WebSocket");
-        return false;
-    }
+        ESP_LOGI(TAG, "Socket configured successfully, socket ID: %d", rsp.data.socketId);
 
-    // Connect to OpenAI
-    if(!com::modem.socketDial("api.openai.com", 443, 0, &rsp, NULL, NULL, 
-                        WALTER_MODEM_SOCKET_PROTO_TCP, 
-                        WALTER_MODEM_ACCEPT_ANY_REMOTE_DISABLED, 
-                        com::WS_SOCKET_ID)) {
-        ESP_LOGE(TAG, "Failed to connect to OpenAI");
-        return false;
-    }
+        // Enable TLS on socket
+        if(!com::modem.socketConfigSecure(true, com::WS_TLS_PROFILE, com::WS_SOCKET_ID)) {
+            ESP_LOGE(TAG, "Failed to enable TLS on WebSocket");
+            return false;
+        }
 
-    ESP_LOGI(TAG, "TCP connection established");
+        // Connect to OpenAI
+        if(!com::modem.socketDial("api.openai.com", 443, 0, &rsp, NULL, NULL, 
+                            WALTER_MODEM_SOCKET_PROTO_TCP, 
+                            WALTER_MODEM_ACCEPT_ANY_REMOTE_DISABLED, 
+                            com::WS_SOCKET_ID)) {
+            ESP_LOGE(TAG, "Failed to connect to OpenAI");
+            return false;
+        }
 
-    // Generate WebSocket key
-    char ws_key[32];
-    com::GenerateWebSocketKey(ws_key, sizeof(ws_key));
+        ESP_LOGI(TAG, "TCP connection established");
 
-    // Build WebSocket handshake request
-    char handshake[1024];
-    int handshake_len = snprintf(handshake, sizeof(handshake),
-        "GET /v1/realtime?model=%s HTTP/1.1\r\n"
-        "Host: api.openai.com\r\n"
-        "Authorization: Bearer %s\r\n"
-        "Upgrade: websocket\r\n"
-        "Connection: Upgrade\r\n"
-        "Sec-WebSocket-Key: %s\r\n"
-        "Sec-WebSocket-Version: 13\r\n"
-        "OpenAI-Beta: realtime=v1\r\n"
-        "\r\n",
-        model, api_key, ws_key);
+        // Generate WebSocket key
+        char ws_key[32];
+        com::GenerateWebSocketKey(ws_key, sizeof(ws_key));
 
-    // Send handshake
-    if(!com::modem.socketSend((uint8_t*)handshake, handshake_len, &rsp, NULL, NULL, 
-                        WALTER_MODEM_RAI_NO_INFO, com::WS_SOCKET_ID)) {
-        ESP_LOGE(TAG, "Failed to send WebSocket handshake");
+        // Build WebSocket handshake request
+        char handshake[1024];
+        int handshake_len = snprintf(handshake, sizeof(handshake),
+            "GET /v1/realtime?model=%s HTTP/1.1\r\n"
+            "Host: api.openai.com\r\n"
+            "Authorization: Bearer %s\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Key: %s\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+            "OpenAI-Beta: realtime=v1\r\n"
+            "\r\n",
+            model, api_key, ws_key);
+
+        // Send handshake
+        if(!com::modem.socketSend((uint8_t*)handshake, handshake_len, &rsp, NULL, NULL, 
+                            WALTER_MODEM_RAI_NO_INFO, com::WS_SOCKET_ID)) {
+            ESP_LOGE(TAG, "Failed to send WebSocket handshake");
+            com::modem.socketClose(&rsp, NULL, NULL, com::WS_SOCKET_ID);
+            return false;
+        }
+
+        ESP_LOGI(TAG, "WebSocket handshake sent");
+
+        // Wait for handshake response
+        vTaskDelay(pdMS_TO_TICKS(2000));
+
+        uint8_t response[512];
+        uint16_t available = com::modem.socketAvailable(com::WS_SOCKET_ID);
+        if(available > 0) {
+            if(com::modem.socketReceive(available, sizeof(response), response, com::WS_SOCKET_ID, &rsp)) {
+                // Check for "101 Switching Protocols"
+                if(strstr((char*)response, "101") != NULL) {
+                    ESP_LOGI(TAG, "WebSocket connected to OpenAI Realtime API");
+                    com::wsSession.connected = true;
+                    return true;
+                }
+            }
+        }
+
+        ESP_LOGE(TAG, "WebSocket handshake failed");
         com::modem.socketClose(&rsp, NULL, NULL, com::WS_SOCKET_ID);
         return false;
     }
 
-    ESP_LOGI(TAG, "WebSocket handshake sent");
-
-    // Wait for handshake response
-    vTaskDelay(pdMS_TO_TICKS(2000));
-
-    uint8_t response[512];
-    uint16_t available = com::modem.socketAvailable(com::WS_SOCKET_ID);
-    if(available > 0) {
-        if(com::modem.socketReceive(available, sizeof(response), response, com::WS_SOCKET_ID, &rsp)) {
-        // Check for "101 Switching Protocols"
-        if(strstr((char*)response, "101") != NULL) {
-            ESP_LOGI(TAG, "WebSocket connected to OpenAI Realtime API");
-            com::wsSession.connected = true;
-            return true;
-        }
-        }
-    }
-
-    ESP_LOGE(TAG, "WebSocket handshake failed");
-    com::modem.socketClose(&rsp, NULL, NULL, com::WS_SOCKET_ID);
+    ESP_LOGE(TAG, "Unknown connection type");
     return false;
 }
 
@@ -634,11 +721,21 @@ bool RealtimeConnect(const char* api_key, const char* model)
 void RealtimeDisconnect()
 {
     if(com::wsSession.connected) {
-        // Send close frame
-        com::WsSend(NULL, 0, com::WS_OP_CLOSE);
+        com::ConnectionType conn_type = com::GetConnectionType();
         
-        WalterModemRsp rsp = {};
-        com::modem.socketClose(&rsp, NULL, NULL, com::WS_SOCKET_ID);
+        if (conn_type == com::CONN_WIFI) {
+            // Close WiFi WebSocket
+            if (com::wsSession.wifi_ws_handle != nullptr) {
+                esp_websocket_client_close(com::wsSession.wifi_ws_handle, portMAX_DELAY);
+                esp_websocket_client_destroy(com::wsSession.wifi_ws_handle);
+                com::wsSession.wifi_ws_handle = nullptr;
+            }
+        } else if (conn_type == com::CONN_CELLULAR) {
+            // Close cellular socket
+            com::WsSend(NULL, 0, com::WS_OP_CLOSE);
+            WalterModemRsp rsp = {};
+            com::modem.socketClose(&rsp, NULL, NULL, com::WS_SOCKET_ID);
+        }
         
         com::wsSession.connected = false;
         ESP_LOGI(TAG, "WebSocket disconnected");
