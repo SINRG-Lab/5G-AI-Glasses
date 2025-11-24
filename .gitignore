@@ -12,6 +12,9 @@ managed_components/
 .vscode/
 *.code-workspace
 
+# Jetbrains
+.idea/
+
 # Python
 __pycache__/
 *.py[cod]
