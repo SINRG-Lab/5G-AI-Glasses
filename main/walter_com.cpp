@@ -36,7 +36,7 @@ static WalterModemRsp rsp = {};
 // Local buffer for incoming HTTPS response
 static uint8_t incomingBuf[1024] = { 0 };
 
-static const char *TAG = "COMMUNICATIONS";
+static const char *TAG = "com";
 
 // ========================================
 // CA CERTIFICATE (FROM DPTECHNIC'S HTTPS EXAMPLE)

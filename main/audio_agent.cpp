@@ -19,7 +19,7 @@
 #include "walter_com.h"
 #include "walter_spiffs.h"
 
-static const char* TAG = "AUDIO AGENT";
+static const char* TAG = "audio_agent";
 
 namespace audio_agent {
 
@@ -508,8 +508,23 @@ bool RealtimeSendAudio(const uint8_t* audio_data, size_t audio_len)
  */
 bool RealtimeCommitAudio()
 {
-    const char* msg = "{\"type\":\"input_audio_buffer.commit\"}";
-    return com::WsSend((uint8_t*)msg, strlen(msg), com::WS_OP_TEXT);
+    // First, commit the audio buffer
+    const char* commit_msg = "{\"type\":\"input_audio_buffer.commit\"}";
+    if (!com::WsSend((uint8_t*)commit_msg, strlen(commit_msg), com::WS_OP_TEXT)) {
+        ESP_LOGE(TAG, "Failed to commit audio buffer");
+        return false;
+    }
+    
+    // Small delay to ensure commit is processed
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    // Trigger response generation
+    if (!RealtimeGenerateResponse()) {
+        ESP_LOGE(TAG, "Failed to create response");
+        return false;
+    }
+    
+    return true;
 }
 
 /**
@@ -564,8 +579,9 @@ bool RealtimeConnect(const char* api_key, const char* model)
                 "wss://api.openai.com/v1/realtime?model=%s", model);
         
         // Build authorization header
-        char auth_header[512];
-        snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", api_key);
+        char auth_header[1024];
+        snprintf(auth_header, sizeof(auth_header), 
+                "Authorization: Bearer %s", api_key);
         
         // Configure WebSocket client with certificate bundle
         esp_websocket_client_config_t ws_cfg = {};
@@ -577,7 +593,7 @@ bool RealtimeConnect(const char* api_key, const char* model)
         ws_cfg.user_agent = "ESP32-Walter";
         ws_cfg.disable_auto_reconnect = true;
         
-        // CRITICAL: Enable certificate bundle for TLS verification
+        // Enable certificate bundle for TLS verification
         ws_cfg.crt_bundle_attach = esp_crt_bundle_attach;
         ws_cfg.skip_cert_common_name_check = false;
         
@@ -604,20 +620,24 @@ bool RealtimeConnect(const char* api_key, const char* model)
         
         // Wait for connection
         int retry_count = 0;
-        const int max_retries = 30; // 3 seconds
+        const int max_retries = 10; // 10 seconds
         while (!com::wsSession.connected && retry_count < max_retries) {
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(1000));
             retry_count++;
         }
-        
+
         if (!com::wsSession.connected) {
             ESP_LOGE(TAG, "WiFi WebSocket connection timeout");
             esp_websocket_client_destroy(com::wsSession.wifi_ws_handle);
             com::wsSession.wifi_ws_handle = nullptr;
             return false;
         }
-        
+
         ESP_LOGI(TAG, "WiFi WebSocket connected to OpenAI Realtime API");
+
+        // Wait a bit for session.created event to arrive
+        vTaskDelay(pdMS_TO_TICKS(500));
+
         return true;
         
     } else if (conn_type == com::CONN_CELLULAR) {
@@ -676,7 +696,6 @@ bool RealtimeConnect(const char* api_key, const char* model)
             "Connection: Upgrade\r\n"
             "Sec-WebSocket-Key: %s\r\n"
             "Sec-WebSocket-Version: 13\r\n"
-            "OpenAI-Beta: realtime=v1\r\n"
             "\r\n",
             model, api_key, ws_key);
 

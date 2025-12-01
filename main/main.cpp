@@ -30,7 +30,7 @@
 // The TLS profile to use for the application
 static const int HTTPS_TLS_PROFILE = 2;
 
-static const char* TAG = "MAIN";
+static const char* TAG = "main";
 
 void PrintCellInfo(WalterModemCellInformation* cellInfo)
 {

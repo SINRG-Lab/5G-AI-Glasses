@@ -24,7 +24,7 @@
 namespace spiffs {
 
 namespace {
-constexpr const char* kTag = "SPIFFS";
+constexpr const char* kTag = "spiffs";
 }  // namespace
 
 void Init() {
