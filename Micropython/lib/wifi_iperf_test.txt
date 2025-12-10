@@ -1,0 +1,29 @@
+MPY: soft reboot
+
+==================================================
+iperf3 Client - WIFI Mode
+==================================================
+Already connected to WiFi
+IP: 192.168.1.21
+
+Connecting to iperf3 server at 109.61.86.65...
+Make sure your server is running: iperf3 -s
+CLIENT MODE: TCP sending
+Connecting to ('109.61.86.65', 5201)
+Interval           Transfer     Bitrate
+  0.00-1.00   sec  96.7 KBytes   792 Kbits/sec
+  1.00-2.00   sec   111 KBytes   908 Kbits/sec
+  2.00-3.01   sec   114 KBytes   932 Kbits/sec
+  3.01-4.01   sec  99.6 KBytes   816 Kbits/sec
+  4.01-5.01   sec  99.6 KBytes   815 Kbits/sec
+  5.01-6.01   sec  93.8 KBytes   766 Kbits/sec
+  6.01-7.02   sec  67.4 KBytes   548 Kbits/sec
+  7.02-8.02   sec  85.0 KBytes   695 Kbits/sec
+  8.02-9.03   sec  93.8 KBytes   762 Kbits/sec
+  9.03-10.03  sec  64.5 KBytes   528 Kbits/sec
+ 10.03-10.13  sec  0.00 Bytes  0.00 bits/sec
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+  0.00-10.13  sec   926 KBytes   749 Kbits/sec  sender
+  0.00-10.19  sec   926 KBytes   744 Kbits/sec  receiver
+
+Done!
