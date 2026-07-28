@@ -1,0 +1,25 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// Gemini API
+#define GEMINI_API_KEY      "YOUR_GEMINI_API_KEY_HERE"
+
+// Cellular network
+#define CELL_APN            "your.apn.here"
+#define APN_USERNAME        ""   // Leave empty if not required
+#define APN_PASSWORD        ""   // Leave empty if not required
+#define SIM_PIN             ""   // Leave empty if no PIN
+
+// Audio pipeline
+#define AUDIO_FILE          "/test.wav"
+#define AUDIO_PROMPT        "Listen to this audio and respond naturally to whatever is said or asked."
+#define TTS_VOICE           "Kore"
+
+// Gemini model endpoints
+#define GEMINI_STT_MODEL    "gemini-2.5-flash"
+#define GEMINI_TTS_MODEL    "gemini-2.5-flash-preview-tts"
+
+// Verbosity: 0=minimal, 1=normal, 2=debug, 3=UART trace
+#define VERBOSITY           1
+
+#endif

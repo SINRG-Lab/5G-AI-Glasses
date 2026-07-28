@@ -1,6 +1,0 @@
-## IDF Component Manager Manifest File
-## Required IDF version
-dependencies:
-  idf: ">=5.0.0"
-  dptechnics/walter-modem: "^1.4.3"
-  espressif/esp_websocket_client: "^1.0.0"
